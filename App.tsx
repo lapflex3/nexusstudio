@@ -21,7 +21,9 @@ import {
   Download,
   Settings,
   BrainCircuit,
-  Volume2
+  Volume2,
+  Undo,
+  Redo
 } from 'lucide-react';
 import { AppMode, ToolType, ProjectState, ChatMessage, GenerationSettings } from './types';
 import { GeminiService, encode, decode, decodeAudioData } from './services/gemini';
@@ -158,6 +160,56 @@ const App: React.FC = () => {
     useSearch: false,
     useMaps: false
   });
+
+  // History State
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const lastSavedCode = useRef(project.code);
+  const saveTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  const saveToHistory = useCallback((code: string) => {
+    if (code === lastSavedCode.current) return;
+    
+    setUndoStack(prev => [...prev.slice(-49), lastSavedCode.current]); // Keep last 50 states
+    setRedoStack([]);
+    lastSavedCode.current = code;
+  }, []);
+
+  const undoCode = useCallback(() => {
+    if (undoStack.length === 0) return;
+    
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    setRedoStack(prev => [...prev, project.code]);
+    setProject(prev => ({ ...prev, code: previous }));
+    lastSavedCode.current = previous;
+  }, [undoStack, project.code]);
+
+  const redoCode = useCallback(() => {
+    if (redoStack.length === 0) return;
+    
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+    setUndoStack(prev => [...prev, project.code]);
+    setProject(prev => ({ ...prev, code: next }));
+    lastSavedCode.current = next;
+  }, [redoStack, project.code]);
+
+  // Keyboard Shortcuts for Editor
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        undoCode();
+      } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key === 'z') || e.key === 'y')) {
+        e.preventDefault();
+        redoCode();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undoCode, redoCode]);
 
   // Services
   const gemini = useRef(new GeminiService());
@@ -363,11 +415,16 @@ const App: React.FC = () => {
   };
 
   const toggleMode = (mode: AppMode) => {
+    const newCode = mode === AppMode.WEBSITE ? INITIAL_WEBSITE_CODE : INITIAL_GAME_CODE;
+    saveToHistory(project.code);
     setProject({
       ...project,
       mode,
-      code: mode === AppMode.WEBSITE ? INITIAL_WEBSITE_CODE : INITIAL_GAME_CODE
+      code: newCode
     });
+    setUndoStack([]);
+    setRedoStack([]);
+    lastSavedCode.current = newCode;
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -578,9 +635,29 @@ const App: React.FC = () => {
           {/* Editor Area */}
           <section className="w-1/2 flex flex-col border-r border-slate-800">
             <div className="bg-slate-900 p-3 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-                <Code2 className="w-4 h-4" />
-                <span>App.tsx</span>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+                  <Code2 className="w-4 h-4" />
+                  <span>App.tsx</span>
+                </div>
+                <div className="flex items-center gap-1 border-l border-slate-800 pl-4">
+                  <button 
+                    onClick={undoCode}
+                    disabled={undoStack.length === 0}
+                    className="p-1 hover:bg-slate-800 rounded text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Undo (Ctrl+Z)"
+                  >
+                    <Undo className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    onClick={redoCode}
+                    disabled={redoStack.length === 0}
+                    className="p-1 hover:bg-slate-800 rounded text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Redo (Ctrl+Y / Ctrl+Shift+Z)"
+                  >
+                    <Redo className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
               <button className="text-[10px] text-slate-500 hover:text-white uppercase tracking-widest font-bold">
                 Auto-save ON
@@ -588,7 +665,15 @@ const App: React.FC = () => {
             </div>
             <textarea
               value={project.code}
-              onChange={(e) => setProject({ ...project, code: e.target.value })}
+              onChange={(e) => {
+                const newCode = e.target.value;
+                setProject({ ...project, code: newCode });
+                
+                if (saveTimeout.current) clearTimeout(saveTimeout.current);
+                saveTimeout.current = setTimeout(() => {
+                  saveToHistory(newCode);
+                }, 1000);
+              }}
               className="flex-1 bg-slate-950 p-6 font-mono text-sm leading-relaxed focus:outline-none text-emerald-400/90 selection:bg-emerald-500/20"
               spellCheck={false}
             />
