@@ -1,0 +1,10 @@
+{
+  "name": "Nexus Studio AI",
+  "description": "A comprehensive AI-powered IDE for building websites and games, featuring image/video generation, live voice interaction, and advanced reasoning.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
